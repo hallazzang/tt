@@ -20,3 +20,10 @@ export function shortDate(iso: string): string {
 export function daysSince(iso: string): number {
   return Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
 }
+
+// Whose tasks to show. linear = Linear assignee filter; github = login for search
+// (`@me` for yourself; undefined when the Linear user has no linked GitHub account).
+export type User = { name: string; linear: object; github?: string };
+
+// View options toggled with keys. allCycles: Linear issues outside the current cycle too.
+export type View = { allCycles: boolean };

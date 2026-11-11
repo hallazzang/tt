@@ -1,5 +1,5 @@
 import { graphql } from '@octokit/graphql';
-import { shortDate, type Cell, type Task } from '../types.js';
+import { shortDate, type Cell, type Task, type User } from '../types.js';
 
 const QUERY = `query($review: String!, $mine: String!) {
   review: search(type: ISSUE, first: 30, query: $review) { ...pr }
@@ -30,14 +30,15 @@ type PR = {
 };
 type Data = { review: { nodes: PR[] }; mine: { nodes: PR[] } };
 
-export async function fetchGitHub(org?: string): Promise<Task[]> {
+export async function fetchGitHub(user: User, org?: string): Promise<Task[]> {
   const token = process.env.GITHUB_TOKEN;
   if (!token || !org) throw new Error('not configured — set GITHUB_TOKEN and GITHUB_ORGS in .env');
+  if (!user.github) throw new Error(`${user.name} has no GitHub account linked in Linear`);
 
   const base = `is:pr is:open archived:false org:${org}`;
   const data = await graphql<Data>(QUERY, {
-    review: `${base} user-review-requested:@me`,
-    mine: `${base} author:@me`,
+    review: `${base} user-review-requested:${user.github}`,
+    mine: `${base} author:${user.github}`,
     headers: { authorization: `token ${token}` },
   });
 

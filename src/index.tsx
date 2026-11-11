@@ -2,6 +2,7 @@
 import { render } from 'ink';
 import { App, loadSources } from './app.js';
 import { errorMessage } from './types.js';
+import { loadUsers } from './users.js';
 
 // .env lives in the tt project directory, so `tt` works from anywhere.
 try {
@@ -11,13 +12,20 @@ try {
 }
 
 const sources = loadSources();
+let users;
+try {
+  users = await loadUsers();
+} catch (e) {
+  console.error(`tt: ${errorMessage(e)}`);
+  process.exit(1);
+}
 
 if (process.argv.includes('--once')) {
   // Debug mode: print each list as plain text and exit.
-  for (const s of sources) {
-    console.log(`== ${s.name}`);
+  for (const u of users) for (const s of sources) {
+    console.log(`== ${users.length > 1 ? `${u.name} · ` : ''}${s.name}`);
     try {
-      for (const t of await s.fetch()) console.log([...t.left, { text: t.title }, ...(t.badges ?? []), ...t.right].map((c) => c.text).join(' '));
+      for (const t of await s.fetch(u, { allCycles: false })) console.log([...t.left, { text: t.title }, ...(t.badges ?? []), ...t.right].map((c) => c.text).join(' '));
     } catch (e) {
       console.log(`error: ${errorMessage(e)}`);
     }
@@ -25,6 +33,6 @@ if (process.argv.includes('--once')) {
   process.exit(0);
 }
 
-const app = render(<App sources={sources} />, { alternateScreen: true });
+const app = render(<App sources={sources} users={users} />, { alternateScreen: true });
 await app.waitUntilExit();
 process.exit(0);
