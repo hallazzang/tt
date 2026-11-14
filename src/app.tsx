@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process';
 import { Box, Text, useApp, useInput, useWindowSize } from 'ink';
 import { useEffect, useRef, useState } from 'react';
 import { Section } from './section.js';
@@ -49,6 +50,13 @@ function withTimeout<T>(p: Promise<T>): Promise<T> {
   return Promise.race([p, new Promise<T>((_, reject) => setTimeout(() => reject(new Error('timed out')), TIMEOUT))]);
 }
 
+type Selection = { id?: string; index: number };
+
+function selectionIndex(tasks: Task[] | undefined, selection: Selection): number {
+  const found = tasks?.findIndex((task) => task.id === selection.id) ?? -1;
+  return found >= 0 ? found : Math.max(0, Math.min(selection.index, (tasks?.length ?? 0) - 1));
+}
+
 export function App({ sources, users }: { sources: Source[]; users: User[] }) {
   const { exit } = useApp();
   const { columns, rows } = useWindowSize();
@@ -58,6 +66,10 @@ export function App({ sources, users }: { sources: Source[]; users: User[] }) {
   const selectedRef = useRef(0);
   selectedRef.current = selected;
   const [sidebar, setSidebar] = useState(users.length > 1);
+  const [pane, setPane] = useState(0);
+  const [selections, setSelections] = useState<Selection[]>(sources.map(() => ({ index: 0 })));
+  const pendingG = useRef(false);
+  const [notice, setNotice] = useState<{ text: string; error?: boolean }>();
   const [updatedAt, setUpdatedAt] = useState<(Date | undefined)[]>(users.map(() => undefined));
   const [allCycles, setAllCycles] = useState(false);
   const allCyclesRef = useRef(false);
@@ -65,6 +77,12 @@ export function App({ sources, users }: { sources: Source[]; users: User[] }) {
   const [refreshing, setRefreshing] = useState(false);
   const lastStart = useRef(0);
   const busy = useRef(false);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(undefined), 3000);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   const refresh = async () => {
     if (busy.current) return; // previous refresh still running
@@ -102,45 +120,110 @@ export function App({ sources, users }: { sources: Source[]; users: User[] }) {
     return () => clearInterval(timer);
   }, []);
 
-  useInput((input) => {
-    if (input === 'q') exit();
-    if (input === 'r') refresh();
+  const userStates = states[selected];
+  useEffect(() => {
+    setSelections((previous) => userStates.map((state, i) => {
+      if (!state.tasks) return previous[i];
+      const index = selectionIndex(state.tasks, previous[i]);
+      return { index, id: state.tasks[index]?.id };
+    }));
+  }, [userStates]);
+
+  useInput((input, key) => {
+    if (key.ctrl || key.meta || key.eventType === 'release') {
+      pendingG.current = false;
+      return;
+    }
+    const first = input === 'gg' || (input === 'g' && pendingG.current);
+    pendingG.current = input === 'g' && !first;
+    if (input === 'q') return exit();
+    if (input === 'r') { refresh(); return; }
     if (input === 'c') {
-      // Loaded data no longer matches the filter, so clear it for every user.
+      // loaded data no longer matches the filter, so clear it for every user.
       setAllCycles((v) => !v);
       setStates(users.map(() => sources.map(() => ({}))));
+      setSelections(sources.map(() => ({ index: 0 })));
       setUpdatedAt(users.map(() => undefined));
+      return;
     }
-    if (users.length < 2) return;
-    if (input === 'j') setSelected((i) => Math.min(i + 1, users.length - 1));
-    if (input === 'k') setSelected((i) => Math.max(i - 1, 0));
-    if (input === 'g') setSelected(0);
-    if (input === 'G') setSelected(users.length - 1);
-    if (input === 'b') setSidebar((v) => !v);
+    if (input === 'b' && users.length > 1) {
+      setSidebar((v) => !v);
+      if (pane === -1) setPane(0);
+      return;
+    }
+    if (input === 'h') { setPane((i) => Math.max(sidebar ? -1 : 0, i - 1)); return; }
+    if (input === 'l') { setPane((i) => Math.min(sources.length - 1, i + 1)); return; }
+    if (input === 'o' || key.return || input === 'y') {
+      const tasks = userStates[pane]?.tasks;
+      const task = pane >= 0 ? tasks?.[selectionIndex(tasks, selections[pane])] : undefined;
+      if (input === 'y') {
+        if (!task?.branch) return;
+        const branch = task.branch;
+        const command = process.platform === 'darwin' ? 'pbcopy' : process.platform === 'win32' ? 'clip.exe' : process.env.WAYLAND_DISPLAY ? 'wl-copy' : 'xclip';
+        const args = command === 'xclip' ? ['-selection', 'clipboard'] : [];
+        let inputError: Error | undefined;
+        const child = execFile(command, args, (error) => {
+          const failure = error ?? inputError;
+          setNotice(failure ? { text: `Could not copy branch: ${errorMessage(failure)}`, error: true } : { text: `Copied branch: ${branch}` });
+        });
+        child.stdin?.on('error', (error: Error) => { inputError = error; });
+        child.stdin?.end(branch);
+        return;
+      }
+      const url = task && [...task.left, ...task.right].find((cell) => cell.url)?.url;
+      if (url) {
+        setNotice(undefined);
+        const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer.exe' : 'xdg-open';
+        execFile(command, [url], (error) => {
+          if (error) setNotice({ text: `Could not open link: ${errorMessage(error)}`, error: true });
+        });
+      }
+      return;
+    }
+    if (input !== 'j' && input !== 'k' && input !== 'G' && !first) return;
+    const count = pane === -1 ? users.length : userStates[pane]?.tasks?.length ?? 0;
+    if (!count) return;
+    const move = (index: number) => first ? 0 : input === 'G' ? count - 1 : Math.max(0, Math.min(count - 1, index + (input === 'j' ? 1 : -1)));
+    if (pane === -1) {
+      const next = move(selected);
+      if (next !== selected) {
+        setSelected(next);
+        setSelections(sources.map(() => ({ index: 0 })));
+        setNotice(undefined);
+      }
+    } else {
+      setSelections((previous) => previous.map((selection, i) => {
+        if (i !== pane) return selection;
+        const tasks = userStates[i].tasks;
+        const index = move(selectionIndex(tasks, selection));
+        return { index, id: tasks?.[index]?.id };
+      }));
+    }
   });
 
-  const userStates = states[selected];
-  // Sidebar: "› " marker + name, plus border and padding.
-  const sidebarWidth = sidebar ? Math.max(...users.map((u) => u.name.length)) + 6 : 0;
-  const width = columns - sidebarWidth;
+  // sidebar: selection marker and name, plus border and padding.
+  const sidebarWidth = sidebar ? Math.min(Math.max(...users.map((u) => u.name.length)) + 6, Math.max(0, columns - 10)) : 0;
+  const width = Math.max(0, columns - sidebarWidth);
+  const bodyHeight = Math.max(0, rows - 1);
+  const peopleStart = Math.max(0, selected - Math.max(1, bodyHeight - 2) + 1);
 
   // Each section needs its rows plus 2 border rows; the last screen row is the footer.
   const heights = allocateHeights(
     userStates.map((s) => Math.max(s.tasks?.length ?? 0, 1) + 2),
-    rows - 1,
+    bodyHeight,
   );
 
   return (
     <Box flexDirection="column" width={columns} height={rows}>
-      <Box height={rows - 1}>
+      <Box height={bodyHeight} overflow="hidden">
         {sidebar && (
-          <Box flexDirection="column" width={sidebarWidth} flexShrink={0} borderStyle="round" borderColor="gray" paddingX={1}>
+          <Box flexDirection="column" width={sidebarWidth} flexShrink={0} borderStyle="round" borderColor={pane === -1 ? 'cyan' : 'gray'} paddingX={1} overflow="hidden">
             {users.map((u, i) => (
-              <Text key={u.name} wrap="truncate-end" bold={i === selected} dimColor={i !== selected}>
-                {i === selected ? '› ' : '  '}
+              <Text key={u.name} wrap="truncate-end" color={pane === -1 && i === selected ? 'cyan' : undefined} bold={i === selected} dimColor={i !== selected}>
+                {i === selected ? '> ' : '  '}
                 {u.name}
               </Text>
-            ))}
+            )).slice(peopleStart, peopleStart + Math.max(0, bodyHeight - 2))}
           </Box>
         )}
         <Box flexDirection="column" width={width}>
@@ -151,16 +234,21 @@ export function App({ sources, users }: { sources: Source[]; users: User[] }) {
               state={userStates[i]}
               width={width}
               height={heights[i]}
+              focused={pane === i}
+              selected={selectionIndex(userStates[i].tasks, selections[i])}
             />
           ))}
         </Box>
       </Box>
       <Text dimColor wrap="truncate-end">
-        {' '}
-        {users.length > 1 ? `${users[selected].name} · ` : ''}
-        {allCycles ? 'all cycles · ' : 'current cycle · '}
-        {updatedAt[selected] ? `Updated ${updatedAt[selected].toLocaleTimeString('en-GB')}` : 'Loading'}
-        {refreshing ? ' · refreshing…' : ''} · r refresh · c cycle{users.length > 1 ? ' · j/k/g/G user · b sidebar' : ''} · q quit
+        {notice ? <Text color={notice.error ? 'red' : 'green'}>{notice.text}</Text> : <>
+          {' '}
+          {users.length > 1 ? `${users[selected].name} · ` : ''}
+          {allCycles ? 'all cycles · ' : 'current cycle · '}
+          {updatedAt[selected] ? `Updated ${updatedAt[selected].toLocaleTimeString('en-GB')}` : 'Loading'}
+          {refreshing ? ' · refreshing…' : ''}
+          {' · h/l pane · j/k row · gg/G ends · o/Enter open · y branch · r refresh · c cycle'}{users.length > 1 ? ' · b sidebar' : ''} · q quit
+        </>}
       </Text>
     </Box>
   );

@@ -8,7 +8,7 @@ const QUERY = `query($review: String!, $mine: String!) {
 fragment pr on SearchResultItemConnection {
   nodes {
     ... on PullRequest {
-      number title url isDraft createdAt repository { name }
+      number title url headRefName isDraft createdAt repository { name }
       mergeable mergeStateStatus
       commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
       reviewThreads(first: 100) { nodes { isResolved } }
@@ -20,6 +20,7 @@ type PR = {
   number: number;
   title: string;
   url: string;
+  headRefName: string;
   isDraft: boolean;
   createdAt: string;
   repository: { name: string };
@@ -53,6 +54,7 @@ export async function fetchGitHub(user: User, org?: string): Promise<Task[]> {
         { text: `${pr.repository.name}#${pr.number}`, dim: true, url: pr.url },
       ],
       title: pr.title,
+      branch: pr.headRefName,
       badges: badges(pr),
       right: [{ text: shortDate(pr.createdAt), dim: true }],
     });
