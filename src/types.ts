@@ -2,7 +2,7 @@ export type Cell = { text: string; color?: string; dim?: boolean; url?: string }
 
 // A row: fixed-width cells on the left, the title (truncated), then badges packed against the
 // fixed-width cells on the right. Badges are per row: only the ones that apply are shown.
-export type Task = { id: string; left: Cell[]; title: string; badges?: Cell[]; right: Cell[] };
+export type Task = { id: string; left: Cell[]; title: string; badges?: Cell[]; right: Cell[]; branch?: string };
 
 // tasks undefined = never loaded; error set = last fetch failed
 export type SourceState = { tasks?: Task[]; error?: string };

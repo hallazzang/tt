@@ -9,7 +9,7 @@ Issue keys and `repo#number` are terminal hyperlinks: click them (Cmd+click in m
 
 With `TT_USERS` set, a sidebar lists those people and the view shows the selected person's issues and PRs, under the same rules. Only the selected person is loaded: on start, when you switch, and on refresh. A person you viewed before shows their last data while reloading.
 
-Keys: `r` refresh now, `c` toggle the cycle filter (current cycle ↔ all), `j`/`k` next/previous person, `g`/`G` first/last person, `b` toggle the sidebar, `q` quit.
+Keys: `h`/`l` previous/next pane, `j`/`k` next/previous row (person in the sidebar), `gg`/`G` first/last row, `o` or Enter open, `y` copy PR branch, `r` refresh, `c` toggle current/all cycles, `b` toggle sidebar, `q` quit.
 
 ## Install
 
